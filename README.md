@@ -1,5 +1,7 @@
 # gofeedfinder
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/markgx/gofeedfinder.svg)](https://pkg.go.dev/github.com/markgx/gofeedfinder)
+
 A command-line utility and Go library designed to detect a website's RSS, Atom, or JSON feed(s) if available.
 
 ## CLI
