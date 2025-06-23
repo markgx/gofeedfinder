@@ -8,12 +8,20 @@ import (
 	"github.com/markgx/gofeedfinder/pkg/gofeedfinder"
 )
 
+var version = "dev"
+
 func main() {
 	withAttributes := flag.Bool("with-attributes", false, "Display additional feed attributes")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
 	if len(flag.Args()) < 1 {
-		fmt.Println("Usage: gofeedfinder [--with-attributes] <url>")
+		fmt.Println("Usage: gofeedfinder [--with-attributes] [--version] <url>")
 		os.Exit(1)
 	}
 
