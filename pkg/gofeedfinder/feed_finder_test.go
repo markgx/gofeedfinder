@@ -77,21 +77,62 @@ func TestFindFeeds_HTTPError(t *testing.T) {
 }
 
 func TestFindFeeds_Non200Status(t *testing.T) {
-	origTransport := http.DefaultTransport
-	defer func() { http.DefaultTransport = origTransport }()
+	tests := []struct {
+		name       string
+		statusCode int
+		wantError  string
+	}{
+		{
+			name:       "404 Not Found",
+			statusCode: 404,
+			wantError:  "HTTP request failed with status 404",
+		},
+		{
+			name:       "500 Internal Server Error",
+			statusCode: 500,
+			wantError:  "HTTP request failed with status 500",
+		},
+		{
+			name:       "403 Forbidden",
+			statusCode: 403,
+			wantError:  "HTTP request failed with status 403",
+		},
+		{
+			name:       "301 Moved Permanently",
+			statusCode: 301,
+			wantError:  "HTTP request failed with status 301",
+		},
+		{
+			name:       "100 Continue",
+			statusCode: 100,
+			wantError:  "HTTP request failed with status 100",
+		},
+	}
 
-	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: 404,
-			Body:       io.NopCloser(strings.NewReader("not found")),
-			Header:     make(http.Header),
-		}, nil
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origTransport := http.DefaultTransport
+			defer func() { http.DefaultTransport = origTransport }()
 
-	feeds, err := FindFeeds("https://example.com")
-	// io.ReadAll will still succeed, but the HTML will not contain feeds
-	if err == nil || feeds != nil {
-		t.Errorf("expected error for non-200 status, got feeds=%+v, err=%v", feeds, err)
+			http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: tt.statusCode,
+					Body:       io.NopCloser(strings.NewReader("response body")),
+					Header:     make(http.Header),
+				}, nil
+			})
+
+			feeds, err := FindFeeds("https://example.com")
+			if err == nil {
+				t.Errorf("expected error for status %d, got nil", tt.statusCode)
+			}
+			if feeds != nil {
+				t.Errorf("expected nil feeds for status %d, got %+v", tt.statusCode, feeds)
+			}
+			if err != nil && err.Error() != tt.wantError {
+				t.Errorf("expected error %q, got %q", tt.wantError, err.Error())
+			}
+		})
 	}
 }
 

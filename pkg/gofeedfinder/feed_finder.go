@@ -2,12 +2,21 @@ package gofeedfinder
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/markgx/gofeedfinder/pkg/gofeedfinder/internal"
+)
+
+// MIME type constants for feed detection
+const (
+	MimeTypeRSS      = "application/rss+xml"
+	MimeTypeAtom     = "application/atom+xml"
+	MimeTypeJSON     = "application/json"
+	MimeTypeFeedJSON = "application/feed+json"
 )
 
 // Feed represents a discovered feed with its URL, title, and type.
@@ -27,6 +36,10 @@ func FindFeeds(url string) ([]Feed, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP request failed with status %d", resp.StatusCode)
+	}
+
 	html, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -44,7 +57,7 @@ func FindFeeds(url string) ([]Feed, error) {
 // that indicate RSS, Atom, or JSON feeds.
 // The url is used to resolve relative URLs to absolute ones.
 func ExtractFeedLinks(html string, url string) []Feed {
-	var feeds []Feed
+	feeds := []Feed{}
 
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
@@ -62,11 +75,11 @@ func ExtractFeedLinks(html string, url string) []Feed {
 		if rel == "alternate" && href != "" {
 			var feedType string
 			switch linkType {
-			case "application/rss+xml":
+			case MimeTypeRSS:
 				feedType = "rss"
-			case "application/atom+xml":
+			case MimeTypeAtom:
 				feedType = "atom"
-			case "application/json", "application/feed+json":
+			case MimeTypeJSON, MimeTypeFeedJSON:
 				feedType = "json"
 			}
 
@@ -81,8 +94,5 @@ func ExtractFeedLinks(html string, url string) []Feed {
 		}
 	})
 
-	if feeds == nil {
-		return []Feed{}
-	}
 	return feeds
 }
