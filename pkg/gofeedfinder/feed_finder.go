@@ -1,6 +1,8 @@
 package gofeedfinder
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +20,9 @@ const (
 	MimeTypeJSON     = "application/json"
 	MimeTypeFeedJSON = "application/feed+json"
 )
+
+// MaxHeadSize limits how much of the HTML head section we'll read (1MB default)
+const MaxHeadSize = 1024 * 1024
 
 // Feed represents a discovered feed with its URL, title, and type.
 type Feed struct {
@@ -40,12 +45,11 @@ func FindFeeds(url string) ([]Feed, error) {
 		return nil, fmt.Errorf("HTTP request failed with status %d", resp.StatusCode)
 	}
 
-	html, err := io.ReadAll(resp.Body)
+	feeds, err := ExtractFeedLinksFromStream(resp.Body, url)
 	if err != nil {
 		return nil, err
 	}
-
-	feeds := ExtractFeedLinks(string(html), url)
+	
 	if len(feeds) > 0 {
 		return feeds, nil
 	}
@@ -95,4 +99,70 @@ func ExtractFeedLinks(html string, url string) []Feed {
 	})
 
 	return feeds
+}
+
+// ExtractFeedLinksFromStream extracts feed links from an HTML stream.
+// It only reads the HTML head section to optimize memory usage and performance.
+// The stream reading stops when </head> is encountered or MaxHeadSize is reached.
+func ExtractFeedLinksFromStream(reader io.Reader, baseURL string) ([]Feed, error) {
+	limitedReader := io.LimitReader(reader, MaxHeadSize)
+	
+	headHTML, err := extractHeadSection(limitedReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract head section: %w", err)
+	}
+	
+	if len(headHTML) == 0 {
+		return []Feed{}, nil
+	}
+	
+	return ExtractFeedLinks(headHTML, baseURL), nil
+}
+
+// extractHeadSection reads from the input stream and extracts only the HTML head section.
+// It stops reading when it encounters </head> or reaches the size limit.
+func extractHeadSection(reader io.Reader) (string, error) {
+	var headBuffer bytes.Buffer
+	scanner := bufio.NewScanner(reader)
+	
+	inHead := false
+	headStartFound := false
+	
+	for scanner.Scan() {
+		line := scanner.Text()
+		lineLower := strings.ToLower(line)
+		
+		// Look for opening <head> tag
+		if !headStartFound && strings.Contains(lineLower, "<head") {
+			inHead = true
+			headStartFound = true
+		}
+		
+		// If we haven't found head yet but found body, give up
+		if !headStartFound && strings.Contains(lineLower, "<body") {
+			break
+		}
+		
+		// If we're in the head section, write the line to buffer
+		if inHead {
+			headBuffer.WriteString(line)
+			headBuffer.WriteString("\n")
+		}
+		
+		// Look for closing </head> tag
+		if inHead && strings.Contains(lineLower, "</head>") {
+			break
+		}
+		
+		// If we're in the head section but encounter body without proper </head>, abort
+		if inHead && strings.Contains(lineLower, "<body") && !strings.Contains(lineLower, "</head>") {
+			return "", nil
+		}
+	}
+	
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	
+	return headBuffer.String(), nil
 }

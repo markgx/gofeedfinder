@@ -300,3 +300,153 @@ func TestExtractFeedLinks(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractFeedLinksFromStream(t *testing.T) {
+	tests := []struct {
+		name     string
+		html     string
+		baseURL  string
+		expected []Feed
+		wantErr  bool
+	}{
+		{
+			name: "RSS feed in head section",
+			html: `<html><head>
+				<link rel="alternate" type="application/rss+xml" href="https://example.com/feed.xml" title="Example RSS Feed">
+				</head><body>lots of body content here</body></html>`,
+			baseURL: "https://example.com",
+			expected: []Feed{
+				{
+					URL:   "https://example.com/feed.xml",
+					Title: "Example RSS Feed",
+					Type:  "rss",
+				},
+			},
+		},
+		{
+			name: "Multiple feeds in head, stops at body",
+			html: `<html><head>
+				<link rel="alternate" type="application/rss+xml" href="/rss.xml" title="RSS Feed">
+				<link rel="alternate" type="application/atom+xml" href="/atom.xml" title="Atom Feed">
+				</head><body>
+				<link rel="alternate" type="application/feed+json" href="/feed.json" title="Should not be found">
+				</body></html>`,
+			baseURL: "https://example.com",
+			expected: []Feed{
+				{
+					URL:   "https://example.com/rss.xml",
+					Title: "RSS Feed",
+					Type:  "rss",
+				},
+				{
+					URL:   "https://example.com/atom.xml",
+					Title: "Atom Feed",
+					Type:  "atom",
+				},
+			},
+		},
+		{
+			name:     "No head section",
+			html:     `<html><body>No head here</body></html>`,
+			baseURL:  "https://example.com",
+			expected: []Feed{},
+		},
+		{
+			name:     "Empty HTML",
+			html:     "",
+			baseURL:  "https://example.com",
+			expected: []Feed{},
+		},
+		{
+			name: "Head section with no feeds",
+			html: `<html><head>
+				<title>No feeds here</title>
+				<meta charset="utf-8">
+				</head><body></body></html>`,
+			baseURL:  "https://example.com",
+			expected: []Feed{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := strings.NewReader(tt.html)
+			result, err := ExtractFeedLinksFromStream(reader, tt.baseURL)
+
+			if tt.wantErr && err == nil {
+				t.Errorf("ExtractFeedLinksFromStream() expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("ExtractFeedLinksFromStream() unexpected error: %v", err)
+			}
+
+			if !cmp.Equal(result, tt.expected) {
+				t.Errorf("ExtractFeedLinksFromStream() = %+v, want %+v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractHeadSection(t *testing.T) {
+	tests := []struct {
+		name     string
+		html     string
+		expected string
+	}{
+		{
+			name: "Basic head section",
+			html: `<html>
+<head>
+<title>Test</title>
+<link rel="alternate" type="application/rss+xml" href="/feed.xml">
+</head>
+<body>Body content</body>
+</html>`,
+			expected: `<head>
+<title>Test</title>
+<link rel="alternate" type="application/rss+xml" href="/feed.xml">
+</head>
+`,
+		},
+		{
+			name: "Head with attributes",
+			html: `<html>
+<head lang="en">
+<meta charset="utf-8">
+</head>
+<body>Body</body>`,
+			expected: `<head lang="en">
+<meta charset="utf-8">
+</head>
+`,
+		},
+		{
+			name:     "No head section",
+			html:     `<html><body>No head</body></html>`,
+			expected: "",
+		},
+		{
+			name: "Head section without closing tag (stops at body)",
+			html: `<html>
+<head>
+<title>Test</title>
+<body>Body starts here</body>`,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := strings.NewReader(tt.html)
+			result, err := extractHeadSection(reader)
+
+			if err != nil {
+				t.Errorf("extractHeadSection() unexpected error: %v", err)
+			}
+
+			if result != tt.expected {
+				t.Errorf("extractHeadSection() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
