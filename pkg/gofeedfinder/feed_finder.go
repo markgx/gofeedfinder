@@ -24,6 +24,9 @@ const (
 // MaxHeadSize limits how much of the HTML head section we'll read (1MB default)
 const MaxHeadSize = 1024 * 1024
 
+// MaxLineSize limits the maximum size of a single line when scanning HTML (1MB default)
+const MaxLineSize = 1024 * 1024
+
 // Feed represents a discovered feed with its URL, title, and type.
 type Feed struct {
 	URL   string // The absolute URL of the feed
@@ -124,6 +127,7 @@ func ExtractFeedLinksFromStream(reader io.Reader, baseURL string) ([]Feed, error
 func extractHeadSection(reader io.Reader) (string, error) {
 	var headBuffer bytes.Buffer
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), MaxLineSize) // Allow up to MaxLineSize per line
 	
 	inHead := false
 	headStartFound := false
