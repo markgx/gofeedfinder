@@ -12,6 +12,7 @@ var version = "dev"
 
 func main() {
 	withAttributes := flag.Bool("with-attributes", false, "Display additional feed attributes")
+	scanCommonPaths := flag.Bool("scan-common-paths", false, "Scan common feed paths when no feeds found in HTML")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
@@ -21,13 +22,17 @@ func main() {
 	}
 
 	if len(flag.Args()) < 1 {
-		fmt.Println("Usage: gofeedfinder [--with-attributes] [--version] <url>")
+		fmt.Println("Usage: gofeedfinder [--with-attributes] [--scan-common-paths] [--version] <url>")
 		os.Exit(1)
 	}
 
 	url := flag.Args()[0]
 
-	feeds, err := gofeedfinder.FindFeeds(url)
+	opts := gofeedfinder.Options{
+		ScanCommonPaths: *scanCommonPaths,
+		MaxConcurrency:  3,
+	}
+	feeds, err := gofeedfinder.FindFeedsWithOptions(url, opts)
 	if err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
