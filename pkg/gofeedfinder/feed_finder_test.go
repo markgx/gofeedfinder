@@ -450,3 +450,285 @@ func TestExtractHeadSection(t *testing.T) {
 		})
 	}
 }
+
+func TestFindFeedsWithOptions_ScanCommonPaths(t *testing.T) {
+	origTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	// Mock responses for different URLs
+	responses := map[string]*http.Response{
+		"https://example.com": {
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`<html><head><title>No feeds here</title></head><body></body></html>`)),
+			Header:     make(http.Header),
+		},
+		"https://example.com/feed": {
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><rss version="2.0"><channel><title>Test Feed</title></channel></rss>`)),
+			Header:     map[string][]string{"Content-Type": {"application/rss+xml"}},
+		},
+	}
+
+	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if resp, ok := responses[req.URL.String()]; ok {
+			return resp, nil
+		}
+		return &http.Response{
+			StatusCode: 404,
+			Body:       io.NopCloser(strings.NewReader("Not Found")),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	opts := Options{
+		ScanCommonPaths: true,
+		MaxConcurrency:  2,
+	}
+	feeds, err := FindFeedsWithOptions("https://example.com", opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(feeds) != 1 {
+		t.Fatalf("expected 1 feed, got %d", len(feeds))
+	}
+
+	expected := Feed{
+		URL:   "https://example.com/feed",
+		Title: "",
+		Type:  "rss",
+	}
+	if !cmp.Equal(feeds[0], expected) {
+		t.Errorf("FindFeedsWithOptions() = %+v, want %+v", feeds[0], expected)
+	}
+}
+
+func TestFindFeedsWithOptions_NoScanCommonPaths(t *testing.T) {
+	origTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	mockHTML := `<html><head><title>No feeds here</title></head><body></body></html>`
+
+	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(mockHTML)),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	opts := Options{
+		ScanCommonPaths: false,
+	}
+	feeds, err := FindFeedsWithOptions("https://example.com", opts)
+	if err == nil || feeds != nil {
+		t.Errorf("expected error for no feeds when scanning disabled, got feeds=%+v, err=%v", feeds, err)
+	}
+}
+
+func TestScanCommonFeedPaths(t *testing.T) {
+	origTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	// Mock responses for different feed paths
+	responses := map[string]*http.Response{
+		"https://example.com/feed": {
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><rss version="2.0"><channel><title>RSS Feed</title></channel></rss>`)),
+			Header:     map[string][]string{"Content-Type": {"application/rss+xml"}},
+		},
+		"https://example.com/atom.xml": {
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Atom Feed</title></feed>`)),
+			Header:     map[string][]string{"Content-Type": {"application/atom+xml"}},
+		},
+	}
+
+	callCount := 0
+	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		callCount++
+		
+		// Handle HEAD requests
+		if req.Method == "HEAD" {
+			if resp, ok := responses[req.URL.String()]; ok {
+				headResp := &http.Response{
+					StatusCode: resp.StatusCode,
+					Header:     resp.Header,
+					Body:       io.NopCloser(strings.NewReader("")),
+				}
+				return headResp, nil
+			}
+			return &http.Response{
+				StatusCode: 404,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     make(http.Header),
+			}, nil
+		}
+		
+		// Handle GET requests
+		if resp, ok := responses[req.URL.String()]; ok {
+			return resp, nil
+		}
+		return &http.Response{
+			StatusCode: 404,
+			Body:       io.NopCloser(strings.NewReader("Not Found")),
+			Header:     make(http.Header),
+		}, nil
+	})
+
+	feeds, err := ScanCommonFeedPaths("https://example.com", 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(feeds) != 2 {
+		t.Fatalf("expected 2 feeds, got %d", len(feeds))
+	}
+
+	// Sort feeds by URL for consistent comparison
+	if feeds[0].URL > feeds[1].URL {
+		feeds[0], feeds[1] = feeds[1], feeds[0]
+	}
+
+	expectedFeeds := []Feed{
+		{URL: "https://example.com/atom.xml", Title: "", Type: "atom"},
+		{URL: "https://example.com/feed", Title: "", Type: "rss"},
+	}
+
+	if !cmp.Equal(feeds, expectedFeeds) {
+		t.Errorf("ScanCommonFeedPaths() = %+v, want %+v", feeds, expectedFeeds)
+	}
+}
+
+func TestCheckFeedURL_WithContentType(t *testing.T) {
+	origTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	tests := []struct {
+		name        string
+		contentType string
+		expected    *Feed
+		wantError   bool
+	}{
+		{
+			name:        "RSS content type",
+			contentType: "application/rss+xml",
+			expected:    &Feed{URL: "https://example.com/feed", Title: "", Type: "rss"},
+		},
+		{
+			name:        "Atom content type",
+			contentType: "application/atom+xml",
+			expected:    &Feed{URL: "https://example.com/feed", Title: "", Type: "atom"},
+		},
+		{
+			name:        "JSON content type",
+			contentType: "application/json",
+			expected:    &Feed{URL: "https://example.com/feed", Title: "", Type: "json"},
+		},
+		{
+			name:        "Feed JSON content type",
+			contentType: "application/feed+json",
+			expected:    &Feed{URL: "https://example.com/feed", Title: "", Type: "json"},
+		},
+		{
+			name:        "Text XML content type",
+			contentType: "text/xml",
+			expected:    &Feed{URL: "https://example.com/feed", Title: "", Type: "rss"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method == "HEAD" {
+					return &http.Response{
+						StatusCode: 200,
+						Header:     map[string][]string{"Content-Type": {tt.contentType}},
+						Body:       io.NopCloser(strings.NewReader("")),
+					}, nil
+				}
+				return &http.Response{
+					StatusCode: 404,
+					Body:       io.NopCloser(strings.NewReader("Not Found")),
+					Header:     make(http.Header),
+				}, nil
+			})
+
+			result, err := checkFeedURL("https://example.com/feed")
+			
+			if tt.wantError && err == nil {
+				t.Errorf("expected error, got nil")
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			
+			if !cmp.Equal(result, tt.expected) {
+				t.Errorf("checkFeedURL() = %+v, want %+v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateFeedContent(t *testing.T) {
+	origTransport := http.DefaultTransport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	tests := []struct {
+		name      string
+		content   string
+		expected  *Feed
+		wantError bool
+	}{
+		{
+			name:     "RSS content",
+			content:  `<?xml version="1.0"?><rss version="2.0"><channel><title>Test</title></channel></rss>`,
+			expected: &Feed{URL: "https://example.com/feed", Title: "", Type: "rss"},
+		},
+		{
+			name:     "RDF content",
+			content:  `<?xml version="1.0"?><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><channel></channel></rdf:RDF>`,
+			expected: &Feed{URL: "https://example.com/feed", Title: "", Type: "rss"},
+		},
+		{
+			name:     "Atom content",
+			content:  `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Test</title></feed>`,
+			expected: &Feed{URL: "https://example.com/feed", Title: "", Type: "atom"},
+		},
+		{
+			name:     "JSON Feed content",
+			content:  `{"version": "https://jsonfeed.org/version/1", "title": "Test", "items": []}`,
+			expected: &Feed{URL: "https://example.com/feed", Title: "", Type: "json"},
+		},
+		{
+			name:      "Invalid content",
+			content:   `<html><body>Not a feed</body></html>`,
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(tt.content)),
+					Header:     make(http.Header),
+				}, nil
+			})
+
+			result, err := validateFeedContent("https://example.com/feed")
+			
+			if tt.wantError && err == nil {
+				t.Errorf("expected error, got nil")
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			
+			if !cmp.Equal(result, tt.expected) {
+				t.Errorf("validateFeedContent() = %+v, want %+v", result, tt.expected)
+			}
+		})
+	}
+}

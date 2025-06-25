@@ -15,7 +15,7 @@ go install github.com/markgx/gofeedfinder/cmd/gofeedfinder@latest
 ### Usage
 
 ```
-gofeedfinder [--with-attributes] <url>
+gofeedfinder [--with-attributes] [--scan-common-paths] <url>
 ```
 
 ### Arguments
@@ -25,6 +25,7 @@ gofeedfinder [--with-attributes] <url>
 ### Options
 
 - `--with-attributes`: Display additional feed attributes (title and type) along with the URL
+- `--scan-common-paths`: Scan common feed paths when no feeds found in HTML (e.g., /feed, /rss, /atom.xml)
 
 ### Examples
 
@@ -42,6 +43,13 @@ https://example.com/feed.xml title=Example Site Feed type=rss
 https://example.com/atom.xml title=Example Site type=atom
 ```
 
+With common path scanning (when no feeds found in HTML):
+```
+$ gofeedfinder --scan-common-paths https://example.com
+https://example.com/feed
+https://example.com/rss.xml
+```
+
 ## Library
 
 ### Installation
@@ -57,6 +65,16 @@ import "github.com/markgx/gofeedfinder/pkg/gofeedfinder"
 
 // Find feeds from a website URL
 feeds, err := gofeedfinder.FindFeeds("https://example.com")
+if err != nil {
+    // Handle error
+}
+
+// Find feeds with additional options
+opts := gofeedfinder.Options{
+    ScanCommonPaths: true, // Scan common paths when no feeds found in HTML
+    MaxConcurrency:  3,    // Maximum concurrent requests for path scanning
+}
+feeds, err := gofeedfinder.FindFeedsWithOptions("https://example.com", opts)
 if err != nil {
     // Handle error
 }
